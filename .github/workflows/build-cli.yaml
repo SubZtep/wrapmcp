@@ -64,7 +64,7 @@ jobs:
 
       - name: Build CLI for ${{ matrix.platform }}
         shell: bash
-        run: bun build src/index.ts --outfile wrapmcp --compile --target="${{ matrix.bun_target }}
+        run: bun build src/index.ts --outfile wrapmcp --compile --target="${{ matrix.bun_target }}"
 
       - name: Rename artifact
         shell: bash
