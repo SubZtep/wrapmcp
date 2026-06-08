@@ -143,10 +143,6 @@ jobs:
                 "artifact": "wrapcli-windows-x64.exe",
                 "checksum": ""
               },
-              "windows-arm64": {
-                "artifact": "wrapcli-windows-arm64.exe",
-                "checksum": ""
-              },
               "macos-x64": {
                 "artifact": "wrapcli-macos-x64",
                 "checksum": ""
@@ -174,7 +170,6 @@ jobs:
               wrapcli-linux-x64)   key=linux-x64 ;;
               wrapcli-linux-arm64) key=linux-arm64 ;;
               wrapcli-windows-x64.exe) key=windows-x64 ;;
-              wrapcli-windows-arm64.exe) key=windows-arm64 ;;
               wrapcli-macos-x64)   key=macos-x64 ;;
               wrapcli-macos-arm64) key=macos-arm64 ;;
               *) echo "❌ Unknown artifact basename: $name"; exit 1 ;;
@@ -187,7 +182,6 @@ jobs:
             .platforms["linux-x64"].checksum == "" or
             .platforms["linux-arm64"].checksum == "" or
             .platforms["windows-x64"].checksum == "" or
-            .platforms["windows-arm64"].checksum == "" or
             .platforms["macos-x64"].checksum == "" or
             .platforms["macos-arm64"].checksum == ""
           ' artifacts/manifest.json > /dev/null; then
