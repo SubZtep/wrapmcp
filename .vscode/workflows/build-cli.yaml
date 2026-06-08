@@ -1,0 +1,213 @@
+name: Build and release CLI
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            bun_target: bun-linux-x64
+            artifact: wrapcli-linux-x64
+          - os: ubuntu-latest
+            platform: linux-arm64
+            bun_target: bun-linux-arm64
+            artifact: wrapcli-linux-arm64
+          - os: windows-latest
+            platform: windows-x64
+            bun_target: bun-windows-x64
+            artifact: wrapcli-windows-x64.exe
+          - os: windows-latest
+            platform: windows/arm64
+            bun_target: bun-windows/arm64
+            artifact: wrapcli-windows/arm64.exe
+          - os: macos-latest
+            platform: macos-x64
+            bun_target: bun-darwin-x64
+            artifact: wrapcli-macos-x64
+          - os: macos-latest
+            platform: macos-arm64
+            bun_target: bun-darwin-arm64
+            artifact: wrapcli-macos-arm64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          PACKAGE_VERSION="$(jq -r .version package.json)"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "v${PACKAGE_VERSION}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version v${PACKAGE_VERSION}"
+            exit 1
+          fi
+          echo "VERSION=v${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+          echo "version=v${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build CLI for ${{ matrix.platform }}
+        shell: bash
+        run: bun build src/index.ts --outfile wrapmcp --compile --target="${{ matrix.bun_target }}
+
+      - name: Rename artifact
+        shell: bash
+        run: |
+          out="${{ matrix.artifact }}"
+          if [[ -f "wrapmcp.exe" ]]; then
+            mv "wrapmcp.exe" "$out"
+          elif [[ -f "wrapmcp" ]]; then
+            mv "wrapmcp" "$out"
+          else
+            echo "Expected wrapmcp or wrapmcp.exe in base dir"
+            ls -la . || true
+            exit 1
+          fi
+          chmod +x "$out" || true
+
+      - name: Generate SHA256 checksum
+        shell: bash
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${{ matrix.artifact }}" | awk '{print $1}' > "${{ matrix.artifact }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.artifact }}" | awk '{print $1}' > "${{ matrix.artifact }}.sha256"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
+          retention-days: 30
+
+  release:
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          path: artifacts
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          PACKAGE_VERSION="$(jq -r .version package.json)"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "v${PACKAGE_VERSION}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version v${PACKAGE_VERSION}"
+            exit 1
+          fi
+          echo "VERSION=v${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+          echo "version=v${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Create manifest.json
+        shell: bash
+        run: |
+          BASE_URL="${{ github.server_url }}/${{ github.repository }}/releases/download/${VERSION}"
+
+          cat > artifacts/manifest.json <<EOF
+          {
+            "version": "${VERSION}",
+            "base_url": "${BASE_URL}",
+            "platforms": {
+              "linux-x64": {
+                "artifact": "wrapcli-linux-x64",
+                "checksum": ""
+              },
+              "linux-arm64": {
+                "artifact": "wrapcli-linux-arm64",
+                "checksum": ""
+              },
+              "windows-x64": {
+                "artifact": "wrapcli-windows-x64.exe",
+                "checksum": ""
+              },
+              "windows-arm64": {
+                "artifact": "wrapcli-windows-arm64.exe",
+                "checksum": ""
+              },
+              "macos-x64": {
+                "artifact": "wrapcli-macos-x64",
+                "checksum": ""
+              },
+              "macos-arm64": {
+                "artifact": "wrapcli-macos-arm64",
+                "checksum": ""
+              }
+            }
+          }
+          EOF
+
+          shopt -s nullglob
+          for artifact in artifacts/*/wrapcli-*; do
+            [[ -f "$artifact" ]] || continue
+            [[ "$artifact" == *.sha256 ]] && continue
+            name=$(basename "$artifact")
+            if [[ ! -f "${artifact}.sha256" ]]; then
+              echo "❌ Missing sidecar: ${artifact}.sha256"
+              exit 1
+            fi
+            checksum=$(tr -d '\n' < "${artifact}.sha256")
+
+            case "$name" in
+              wrapcli-linux-x64)   key=linux-x64 ;;
+              wrapcli-linux-arm64) key=linux-arm64 ;;
+              wrapcli-windows-x64.exe) key=windows-x64 ;;
+              wrapcli-windows-arm64.exe) key=windows-arm64 ;;
+              wrapcli-macos-x64)   key=macos-x64 ;;
+              wrapcli-macos-arm64) key=macos-arm64 ;;
+              *) echo "❌ Unknown artifact basename: $name"; exit 1 ;;
+            esac
+
+            jq --arg c "$checksum" --arg k "$key" '.platforms[$k].checksum=$c' artifacts/manifest.json > tmp.json && mv tmp.json artifacts/manifest.json
+          done
+
+          if jq -e '
+            .platforms["linux-x64"].checksum == "" or
+            .platforms["linux-arm64"].checksum == "" or
+            .platforms["windows-x64"].checksum == "" or
+            .platforms["windows-arm64"].checksum == "" or
+            .platforms["macos-x64"].checksum == "" or
+            .platforms["macos-arm64"].checksum == ""
+          ' artifacts/manifest.json > /dev/null; then
+            echo "❌ Missing checksum in manifest"
+            cat artifacts/manifest.json
+            exit 1
+          fi
+
+          cat artifacts/manifest.json
+
+      - name: Create Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          draft: false
+          generate_release_notes: true
+          files: |
+            artifacts/*/wrapcli-*
+            artifacts/manifest.json
