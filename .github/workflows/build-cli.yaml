@@ -26,10 +26,6 @@ jobs:
             platform: windows-x64
             bun_target: bun-windows-x64
             artifact: wrapcli-windows-x64.exe
-          - os: windows-latest
-            platform: windows/arm64
-            bun_target: bun-windows/arm64
-            artifact: wrapcli-windows/arm64.exe
           - os: macos-latest
             platform: macos-x64
             bun_target: bun-darwin-x64
